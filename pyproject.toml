@@ -1,5 +1,5 @@
 [project]
-name = "rock-daisy-viz"
+name = "rockdaisy"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -18,3 +18,10 @@ dependencies = [
     "trame-vtk>=2.8.15",
     "trame-vuetify>=3.0.1",
 ]
+
+[tool.setuptools]
+packages = ["rockdaisy"]  # <-- your actual package directory
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
