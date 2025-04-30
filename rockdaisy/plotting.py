@@ -43,48 +43,82 @@ def plot_time_histogram(df, datetime_col='datetime', bins='auto'):
     plt.show()
 
 
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+import rasterio
+from rasterio.plot import show as rio_show
+from cartopy.io.shapereader import Reader
+import cartopy.io.shapereader as shpreader
+from matplotlib import colormaps
+
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+import rasterio
+from rasterio.plot import show as rio_show
+from cartopy.io.shapereader import Reader
+import cartopy.io.shapereader as shpreader
+from matplotlib import colormaps
+
 def plot_geographical_positions(
     df, 
     lat_col='decimallatitude_wgs', 
     lon_col='decimallongitude_wgs',
-    species_col='speciesCurated',
+    group_col='speciesCurated',
+    group_label='Species',  # NEW: custom name for legend and title
     zoom='auto',
     cluster_line=False,
-    plot_towns=False,
     plot_roads=False,
-    plot_rivers=False
+    plot_rivers=False,
+    raster_path=None,
+    bbox=None
 ):
-    fig, ax = plt.subplots(figsize=(12, 8), subplot_kw={'projection': ccrs.PlateCarree()})
+    projection = ccrs.PlateCarree()
+    fig, ax = plt.subplots(figsize=(12, 8), subplot_kw={'projection': projection})
 
-    # Add map features
+    # Filter data to only what's inside the bbox
+    if bbox:
+        min_lon, max_lon, min_lat, max_lat = bbox
+        df = df[
+            (df[lon_col] >= min_lon) & (df[lon_col] <= max_lon) &
+            (df[lat_col] >= min_lat) & (df[lat_col] <= max_lat)
+        ]
+
+    if df.empty:
+        print("No data inside bounding box. Nothing to plot.")
+        return
+
+    # Raster background
+    if raster_path:
+        with rasterio.open(raster_path) as src:
+            rio_show(src, ax=ax, transform=src.transform)
+
+    # Base map features
     ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
     ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=0.5)
-    ax.add_feature(cfeature.LAND, edgecolor='black', alpha=0.5)
-    ax.add_feature(cfeature.OCEAN, alpha=0.5)
+    ax.add_feature(cfeature.LAND, edgecolor='black', alpha=0.3)
+    ax.add_feature(cfeature.OCEAN, alpha=0.3)
 
     if plot_rivers:
         ax.add_feature(cfeature.RIVERS, edgecolor='blue', alpha=0.7, linewidth=0.5)
     if plot_roads:
         roads_shp = shpreader.natural_earth(category='cultural', name='roads', resolution='10m')
         roads = Reader(roads_shp).geometries()
-        ax.add_geometries(roads, crs=ccrs.PlateCarree(), edgecolor='brown', facecolor='none', linewidth=0.5, alpha=0.7)
+        ax.add_geometries(roads, crs=projection, edgecolor='brown', facecolor='none', linewidth=0.5, alpha=0.7)
 
-    # Assign unique colors to species
-    species_list = df[species_col].unique()
-    cmap = cm.get_cmap('tab20', len(species_list))
-    color_map = {species: cmap(i) for i, species in enumerate(species_list)}
+    # Color by group
+    group_list = df[group_col].dropna().unique()
+    cmap = colormaps.get_cmap('tab20')
+    color_map = {group: cmap(i / len(group_list)) for i, group in enumerate(group_list)}
 
-    # Plot points, grouped by species
-    for species in species_list:
-        subset = df[df[species_col] == species]
+    for group in group_list:
+        subset = df[df[group_col] == group]
         ax.scatter(
-            subset[lon_col],
-            subset[lat_col],
-            color=color_map[species],
-            s=50,
-            alpha=0.7,
-            edgecolor='k',
-            label=species,
+            subset[lon_col], subset[lat_col],
+            color=color_map[group],
+            s=50, alpha=0.8, edgecolor='k',
+            label=group,
             transform=ccrs.PlateCarree()
         )
 
@@ -94,32 +128,21 @@ def plot_geographical_positions(
                 ax.plot(
                     [subset.iloc[i][lon_col], subset.iloc[i + 1][lon_col]],
                     [subset.iloc[i][lat_col], subset.iloc[i + 1][lat_col]],
-                    color=color_map[species],
-                    linewidth=1.5,
-                    alpha=0.6,
+                    color=color_map[group],
+                    linewidth=1.5, alpha=0.6,
                     transform=ccrs.PlateCarree()
                 )
 
-    # Determine map extent
-    min_lat, max_lat = df[lat_col].min(), df[lat_col].max()
-    min_lon, max_lon = df[lon_col].min(), df[lon_col].max()
-    lat_buffer = (max_lat - min_lat) * 0.1 if max_lat > min_lat else 0.5
-    lon_buffer = (max_lon - min_lon) * 0.1 if max_lon > min_lon else 0.5
-
-    if zoom == 'auto' or isinstance(zoom, (int, float)):
-        extent = [
-            min_lon - lon_buffer, max_lon + lon_buffer,
-            min_lat - lat_buffer, max_lat + lat_buffer
-        ]
-        ax.set_extent(extent, crs=ccrs.PlateCarree())
-    elif zoom == 'california':
-        ax.set_extent([-125, -113, 32, 42], crs=ccrs.PlateCarree())
-    elif zoom == 'us':
-        ax.set_extent([-130, -60, 24, 50], crs=ccrs.PlateCarree())
-    elif zoom == 'world':
-        ax.set_global()
+    # Set extent
+    if bbox:
+        ax.set_extent(bbox, crs=projection)
     else:
-        raise ValueError("Invalid zoom option.")
+        min_lat, max_lat = df[lat_col].min(), df[lat_col].max()
+        min_lon, max_lon = df[lon_col].min(), df[lon_col].max()
+        lat_buffer = (max_lat - min_lat) * 0.1 if max_lat > min_lat else 1
+        lon_buffer = (max_lon - min_lon) * 0.1 if max_lon > min_lon else 1
+        extent = [min_lon - lon_buffer, max_lon + lon_buffer, min_lat - lat_buffer, max_lat + lat_buffer]
+        ax.set_extent(extent, crs=projection)
 
     # Gridlines
     gl = ax.gridlines(draw_labels=True, linestyle='--', linewidth=0.5, alpha=0.7)
@@ -128,208 +151,175 @@ def plot_geographical_positions(
     gl.xlabel_style = {'size': 10}
     gl.ylabel_style = {'size': 10}
 
-    ax.set_title('Geographical Positions by Species')
-
-    # Legend on the right
+    ax.set_title(f'Geographical Positions by {group_label}')
     ax.legend(
         loc='center left',
         bbox_to_anchor=(1.02, 0.5),
         fontsize=9,
-        frameon=True,
-        title='Species'
+        title=group_label,
+        frameon=True
     )
 
     plt.tight_layout()
     plt.show()
 
 
-def plot_geographical_heatmap(df, lat_col='lat', lon_col='lon', zoom='auto', grid_size=100, plot_rivers=False, plot_roads=False):
-    """
-    Plots a heatmap of geographical positions from a DataFrame based on record density overlaid on a detailed world map.
+def plot_geographical_heatmap_overlay(
+    df,
+    lat_col='decimallatitude_wgs',
+    lon_col='decimallongitude_wgs',
+    group_col='speciesCurated',
+    group_label='Species',
+    raster_path=None,
+    grid_size=100,
+    bbox=None,
+    plot_rivers=False,
+    plot_roads=False,
+    max_groups=10,
+    show_density_labels=False
+):
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as mpatches
+    import rasterio
+    from rasterio.plot import show as rio_show
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+    from matplotlib.colors import LogNorm, LinearSegmentedColormap, to_rgb
+    from cartopy.io.shapereader import Reader
+    import cartopy.io.shapereader as shpreader
 
-    Parameters:
-    - df (pd.DataFrame): DataFrame containing latitude and longitude columns.
-    - lat_col (str): Name of the latitude column.
-    - lon_col (str): Name of the longitude column.
-    - zoom (str or float): Zoom level ('auto', 'california', 'us', 'world') or a numeric value to control lat/lon buffers inversely.
-    - grid_size (int): Number of bins for the heatmap in each dimension (higher values result in finer grids).
-    - plot_rivers (bool): Whether to plot rivers on the map.
-    - plot_roads (bool): Whether to plot roads on the map.
-    """
-    # Create the figure and axis using PlateCarree projection
-    fig, ax = plt.subplots(figsize=(12, 8), subplot_kw={'projection': ccrs.PlateCarree()})
+    base_colors = [
+        '#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00',
+        '#a65628', '#f781bf', '#999999', '#66c2a5', '#d95f02'
+    ]
 
-    # Add map features (coastlines, countries, etc.)
-    ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
-    ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=0.5)
-    ax.add_feature(cfeature.LAND, edgecolor='black', alpha=0.5)
-    ax.add_feature(cfeature.OCEAN, alpha=0.5)
+    # Filter to bbox
+    if bbox:
+        min_lon, max_lon, min_lat, max_lat = bbox
+        df = df[
+            (df[lon_col] >= min_lon) & (df[lon_col] <= max_lon) &
+            (df[lat_col] >= min_lat) & (df[lat_col] <= max_lat)
+        ]
 
-    # Add rivers and roads
-    if plot_rivers:
-        ax.add_feature(cfeature.RIVERS, edgecolor='blue', alpha=0.7, linewidth=0.5, label='Rivers')
-    if plot_roads:
-        pass
+    if df.empty:
+        print("No data in bounding box. Nothing to plot.")
+        return
 
-    # Determine the map extent based on zoom level
-    if isinstance(zoom, (int, float)):
-        zoom_factor = 1 / zoom  # Inverse relationship
-        # Calculate bounds for zoom
-        min_lat, max_lat = df[lat_col].min(), df[lat_col].max()
-        min_lon, max_lon = df[lon_col].min(), df[lon_col].max()
+    # Get unique groups
+    group_list = df[group_col].dropna().unique()
+    if len(group_list) > max_groups:
+        print(f"[info] Limiting to first {max_groups} {group_label.lower()}s for clarity.")
+        group_list = group_list[:max_groups]
 
-        # Buffer for visualization
-        lat_buffer = (max_lat - min_lat) * zoom_factor
-        lon_buffer = (max_lon - min_lon) * zoom_factor
-
-        extent = [min_lon - lon_buffer, max_lon + lon_buffer,
-                  min_lat - lat_buffer, max_lat + lat_buffer]
-        ax.set_extent(extent, crs=ccrs.PlateCarree())
-
-    elif zoom == 'auto':
-        min_lat, max_lat = df[lat_col].min(), df[lat_col].max()
-        min_lon, max_lon = df[lon_col].min(), df[lon_col].max()
-        lat_buffer = (max_lat - min_lat) * 0.1
-        lon_buffer = (max_lon - min_lon) * 0.1
-        extent = [min_lon - lon_buffer, max_lon + lon_buffer,
-                  min_lat - lat_buffer, max_lat + lat_buffer]
-        ax.set_extent(extent, crs=ccrs.PlateCarree())
-
-    elif zoom == 'california':
-        extent = [-125, -113, 32, 42]  # California region
-        ax.set_extent(extent, crs=ccrs.PlateCarree())
-
-    elif zoom == 'us':
-        extent = [-130, -60, 24, 50]  # Continental US
-        ax.set_extent(extent, crs=ccrs.PlateCarree())
-
-    elif zoom == 'world':
-        ax.set_global()
-    else:
-        raise ValueError("Invalid zoom option. Choose from 'auto', 'california', 'us', 'world', or a numeric value.")
-
-    # Create a 2D histogram for the heatmap
-    lon_bins = np.linspace(df[lon_col].min(), df[lon_col].max(), grid_size)
-    lat_bins = np.linspace(df[lat_col].min(), df[lat_col].max(), grid_size)
-    heatmap, lon_edges, lat_edges = np.histogram2d(df[lon_col], df[lat_col], bins=[lon_bins, lat_bins])
-
-    # Plot the heatmap
-    lon_centers = (lon_edges[:-1] + lon_edges[1:]) / 2
-    lat_centers = (lat_edges[:-1] + lat_edges[1:]) / 2
+    # Grid setup
+    lon_all = df[lon_col].values
+    lat_all = df[lat_col].values
+    lon_bins = np.linspace(lon_all.min(), lon_all.max(), grid_size)
+    lat_bins = np.linspace(lat_all.min(), lat_all.max(), grid_size)
+    lon_centers = (lon_bins[:-1] + lon_bins[1:]) / 2
+    lat_centers = (lat_bins[:-1] + lat_bins[1:]) / 2
     lon_grid, lat_grid = np.meshgrid(lon_centers, lat_centers)
 
-    pcm = ax.pcolormesh(lon_grid, lat_grid, heatmap.T, cmap='winter', norm=LogNorm(), transform=ccrs.PlateCarree(), alpha=0.8)
+    projection = ccrs.PlateCarree()
+    fig, ax = plt.subplots(figsize=(14, 8), subplot_kw={'projection': projection})
 
-    # Add a color bar
-    cbar = plt.colorbar(pcm, ax=ax, orientation='vertical', shrink=0.7)
-    cbar.set_label('Number of Records')
+    # Raster background
+    if raster_path:
+        with rasterio.open(raster_path) as src:
+            rio_show(src, ax=ax, transform=src.transform)
 
-    # Add lat/lon gridlines and labels
+    # Basemap features
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
+    ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=0.5)
+    ax.add_feature(cfeature.LAND, edgecolor='black', alpha=0.3)
+    ax.add_feature(cfeature.OCEAN, alpha=0.3)
+    if plot_rivers:
+        ax.add_feature(cfeature.RIVERS, edgecolor='blue', alpha=0.6, linewidth=0.4)
+    if plot_roads:
+        roads_shp = shpreader.natural_earth(category='cultural', name='roads', resolution='10m')
+        roads = Reader(roads_shp).geometries()
+        ax.add_geometries(roads, crs=projection, edgecolor='brown', facecolor='none', linewidth=0.5, alpha=0.6)
+
+    # Create color maps
+    color_map = {}
+    legend_patches = []
+    for idx, group in enumerate(group_list):
+        base_rgb = np.array(to_rgb(base_colors[idx % len(base_colors)]))
+        light_rgb = base_rgb + (1 - base_rgb) * 0.4
+        cmap = LinearSegmentedColormap.from_list(
+            f"{group}_fade", [light_rgb, base_rgb], N=256
+        )
+        color_map[group] = cmap
+        legend_patches.append(mpatches.Patch(color=base_rgb, label=group))
+
+    # Plot heatmaps
+    for group in group_list:
+        cmap = color_map[group]
+        subset = df[df[group_col] == group]
+        if subset.empty:
+            continue
+
+        heatmap, _, _ = np.histogram2d(
+            subset[lon_col], subset[lat_col],
+            bins=[lon_bins, lat_bins]
+        )
+
+        if np.sum(heatmap) == 0:
+            continue
+
+        ax.pcolormesh(
+            lon_grid, lat_grid, heatmap.T,
+            cmap=cmap,
+            norm=LogNorm(vmin=1, vmax=np.max(heatmap) + 1),
+            alpha=0.85,
+            transform=projection
+        )
+
+        # Density labels
+        if show_density_labels:
+            for i in range(heatmap.shape[0]):
+                for j in range(heatmap.shape[1]):
+                    val = int(heatmap[i, j])
+                    if val > 0:
+                        ax.text(
+                            lon_centers[i], lat_centers[j], str(val),
+                            fontsize=6, color='black', weight='bold',
+                            ha='center', va='center',
+                            transform=projection,
+                            bbox=dict(facecolor='white', edgecolor='none', alpha=0.0, pad=0.5)
+                        )
+
+        # Max-density label
+        max_idx = np.unravel_index(np.argmax(heatmap), heatmap.shape)
+        label_lon = lon_centers[max_idx[0]]
+        label_lat = lat_centers[max_idx[1]]
+        ax.text(
+            label_lon, label_lat, group,
+            fontsize=9, weight='bold', ha='center', va='center',
+            transform=projection,
+            bbox=dict(facecolor='white', edgecolor='none', alpha=0.25, boxstyle='round,pad=0.3')
+        )
+
+    # Set extent
+    if bbox:
+        ax.set_extent(bbox, crs=projection)
+    else:
+        lat_buffer = (lat_all.max() - lat_all.min()) * 0.1
+        lon_buffer = (lon_all.max() - lon_all.min()) * 0.1
+        ax.set_extent([
+            lon_all.min() - lon_buffer, lon_all.max() + lon_buffer,
+            lat_all.min() - lat_buffer, lat_all.max() + lat_buffer
+        ], crs=projection)
+
+    # Gridlines and legend
     gl = ax.gridlines(draw_labels=True, linestyle='--', linewidth=0.5, alpha=0.7)
     gl.top_labels = False
     gl.right_labels = False
     gl.xlabel_style = {'size': 10}
     gl.ylabel_style = {'size': 10}
 
-    # Add a distance scale in the bottom left corner
-    if isinstance(zoom, (int, float)) or zoom == 'auto':
-        # Calculate the approximate scale for the distance
-        scale_km = (extent[1] - extent[0]) * 111 / 10  # Approximate 1 degree as 111 km
-        scale_label = f'{int(scale_km)} km'
-        ax.plot([extent[0] + 0.05 * (extent[1] - extent[0]), extent[0] + 0.15 * (extent[1] - extent[0])],
-                [extent[2] + 0.05 * (extent[3] - extent[2]), extent[2] + 0.05 * (extent[3] - extent[2])],
-                transform=ccrs.PlateCarree(), color='black', linewidth=2)
-        ax.text(extent[0] + 0.16 * (extent[1] - extent[0]),
-                extent[2] + 0.05 * (extent[3] - extent[2]),
-                scale_label,
-                transform=ccrs.PlateCarree(), fontsize=10, color='black')
-
-    ax.set_title('Geographical Density Heatmap')
-    plt.show()
-
-def plot_geographical_heatmap_by_day(df, lat_col='lat', lon_col='lon', datetime_col='datetime', zoom='auto', grid_size=100, plot_rivers=False, plot_roads=False):
-    """
-    Wrapper function to plot a heatmap for each day in the DataFrame.
-
-    Parameters:
-    - df (pd.DataFrame): DataFrame containing latitude, longitude, and datetime columns.
-    - lat_col (str): Name of the latitude column.
-    - lon_col (str): Name of the longitude column.
-    - datetime_col (str): Name of the datetime column.
-    - zoom (str or float): Zoom level ('auto', 'california', 'us', 'world') or a numeric value to control lat/lon buffers inversely.
-    - grid_size (int): Number of bins for the heatmap in each dimension (higher values result in finer grids).
-    - plot_rivers (bool): Whether to plot rivers on the map.
-    - plot_roads (bool): Whether to plot roads on the map.
-    """
-    df[datetime_col] = pd.to_datetime(df[datetime_col])
-    df['date'] = df[datetime_col].dt.date
-
-    unique_dates = sorted(df['date'].unique())
-    num_days = len(unique_dates)
-
-    # Determine the overall extent to ensure consistent zoom across subplots
-    min_lat, max_lat = df[lat_col].min(), df[lat_col].max()
-    min_lon, max_lon = df[lon_col].min(), df[lon_col].max()
-    lat_buffer = (max_lat - min_lat) * 0.1
-    lon_buffer = (max_lon - min_lon) * 0.1
-    extent = [min_lon - lon_buffer, max_lon + lon_buffer, min_lat - lat_buffer, max_lat + lat_buffer]
-
-    # Calculate global min and max for heatmap values
-    lon_bins = np.linspace(min_lon, max_lon, grid_size)
-    lat_bins = np.linspace(min_lat, max_lat, grid_size)
-    global_heatmap = np.histogram2d(df[lon_col], df[lat_col], bins=[lon_bins, lat_bins])[0]
-    vmin = global_heatmap[global_heatmap > 0].min() if np.any(global_heatmap > 0) else 1
-    vmax = global_heatmap.max() if np.isfinite(global_heatmap.max()) else 10
-
-    # Create subplots with 3 per row
-    ncols = 3
-    nrows = (num_days + ncols - 1) // ncols
-    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(15, 5 * nrows), subplot_kw={'projection': ccrs.PlateCarree()})
-    axes = axes.flatten()
-
-    for ax, current_date in zip(axes, unique_dates):
-        daily_df = df[df['date'] == current_date]
-
-        # Add map features (coastlines, countries, etc.)
-        ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
-        ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=0.5)
-        ax.add_feature(cfeature.LAND, edgecolor='black', alpha=0.5)
-        ax.add_feature(cfeature.OCEAN, alpha=0.5)
-
-        # Add rivers and roads
-        if plot_rivers:
-            ax.add_feature(cfeature.RIVERS, edgecolor='blue', alpha=0.7, linewidth=0.5, label='Rivers')
-        if plot_roads:
-            pass
-
-        # Set the consistent extent
-        ax.set_extent(extent, crs=ccrs.PlateCarree())
-
-        # Create a 2D histogram for the heatmap
-        heatmap, lon_edges, lat_edges = np.histogram2d(daily_df[lon_col], daily_df[lat_col], bins=[lon_bins, lat_bins])
-
-        lon_centers = (lon_edges[:-1] + lon_edges[1:]) / 2
-        lat_centers = (lat_edges[:-1] + lat_edges[1:]) / 2
-        lon_grid, lat_grid = np.meshgrid(lon_centers, lat_centers)
-
-        pcm = ax.pcolormesh(lon_grid, lat_grid, heatmap.T, cmap='winter', norm=LogNorm(vmin=vmin, vmax=vmax), transform=ccrs.PlateCarree(), alpha=0.8)
-
-        # Add a color bar
-        cbar = plt.colorbar(pcm, ax=ax, orientation='vertical', shrink=0.7)
-        cbar.set_label('Number of Records')
-
-        # Add lat/lon gridlines and labels
-        gl = ax.gridlines(draw_labels=True, linestyle='--', linewidth=0.5, alpha=0.7)
-        gl.top_labels = False
-        gl.right_labels = False
-        gl.xlabel_style = {'size': 10}
-        gl.ylabel_style = {'size': 10}
-
-        ax.set_title(f'Heatmap for {current_date}')
-
-    # Turn off unused subplots
-    for ax in axes[len(unique_dates):]:
-        ax.set_visible(False)
-
+    ax.set_title(f"Overlaid {group_label} Heatmaps with Density Labels", fontsize=14)
+    ax.legend(handles=legend_patches, loc='center left', bbox_to_anchor=(1.01, 0.5), title=group_label)
     plt.tight_layout()
     plt.show()

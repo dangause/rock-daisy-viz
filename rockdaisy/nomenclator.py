@@ -1,102 +1,189 @@
 import re
+import json
+import pandas as pd
 
-def parse_nomenclator(filepath):
-    """
-    Parse a botanical nomenclator file into a standardized dictionary.
+class Nomenclator:
+    def __init__(self, filepath):
+        self.species_dict = {}
+        self._parse_file(filepath)
 
-    Returns a dict where each name (accepted or synonym) maps to:
-    {
-        "species": str,               # e.g., 'Perityle canescens'
-        "authors": str,               # e.g., 'Everly'
-        "accepted_name": str,         # accepted species name
-        "accepted_authors": str,      # authorship of the accepted name
-        "relationship": "accepted" | "synonym"
-    }
-    """
-    species_dict = {}
-    accepted_species = None
-    accepted_authors = None
-
-    def split_species_and_authors(name_str):
+    def _split_species_and_authors(self, name_str):
+        """
+        Split into genus, species, and authors, applying capitalization rules:
+        - Genus: Capitalize first letter only
+        - Species: all lowercase
+        """
         parts = name_str.strip().split()
-        species = " ".join(parts[:2])
+        if len(parts) < 2:
+            return None, None, name_str.strip()
+        genus = parts[0].capitalize()
+        species = parts[1].lower()
         authors = " ".join(parts[2:]) if len(parts) > 2 else ""
-        return species, authors
+        return genus, species, authors
 
-    with open(filepath, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.rstrip()
-            if not line.strip():
-                continue
 
-            indent = len(line) - len(line.lstrip())
-            stripped = line.strip()
-            is_synonym_line = stripped.startswith(('=', '+'))
+    def _format_record(self, genus, species, authors, acc_genus, acc_species, acc_authors, relationship):
+        return {
+            "scientific_name": f"{genus} {species}",
+            "genus": genus,
+            "species": species,
+            "authors": authors,
+            "accepted_name": f"{acc_genus} {acc_species}",
+            "accepted_authors": acc_authors,
+            "relationship": relationship
+        }
 
-            # Remove leading =/+ markers
-            clean = stripped.lstrip('=+').strip()
+    def _parse_file(self, filepath):
+        accepted_genus = accepted_species = accepted_authors = None
 
-            # Case: synonym explicitly mapped to accepted name
-            if '=' in clean and is_synonym_line:
-                parts = [p.strip() for p in re.split(r'\s*=\s*', clean)]
-                if len(parts) == 2:
-                    syn_full, acc_full = parts
-                    syn_species, syn_authors = split_species_and_authors(syn_full)
-                    acc_species, acc_authors = split_species_and_authors(acc_full)
+        with open(filepath, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.rstrip()
+                if not line.strip():
+                    continue
 
-                    # Store synonym entry
-                    species_dict[syn_species] = {
-                        "species": syn_species,
-                        "authors": syn_authors,
-                        "accepted_name": acc_species,
-                        "accepted_authors": acc_authors,
-                        "relationship": "synonym"
+                indent = len(line) - len(line.lstrip())
+                stripped = line.strip()
+                is_synonym_line = stripped.startswith(('=', '+'))
+                clean = stripped.lstrip('=+').strip()
+
+                if '=' in clean and is_synonym_line:
+                    parts = [p.strip() for p in re.split(r'\s*=\s*', clean)]
+                    if len(parts) == 2:
+                        syn_full, acc_full = parts
+                        syn_g, syn_s, syn_auth = self._split_species_and_authors(syn_full)
+                        acc_g, acc_s, acc_auth = self._split_species_and_authors(acc_full)
+
+                        if syn_g and acc_g:
+                            self.species_dict[f"{syn_g} {syn_s}"] = self._format_record(
+                                syn_g, syn_s, syn_auth,
+                                acc_g, acc_s, acc_auth,
+                                "synonym"
+                            )
+                            if f"{acc_g} {acc_s}" not in self.species_dict:
+                                self.species_dict[f"{acc_g} {acc_s}"] = self._format_record(
+                                    acc_g, acc_s, acc_auth,
+                                    acc_g, acc_s, acc_auth,
+                                    "accepted"
+                                )
+                    continue
+
+                if indent > 0 and accepted_genus:
+                    syn_g, syn_s, syn_auth = self._split_species_and_authors(clean)
+                    self.species_dict[f"{syn_g} {syn_s}"] = self._format_record(
+                        syn_g, syn_s, syn_auth,
+                        accepted_genus, accepted_species, accepted_authors,
+                        "synonym"
+                    )
+                    continue
+
+                if not is_synonym_line:
+                    accepted_genus, accepted_species, accepted_authors = self._split_species_and_authors(clean)
+                    self.species_dict[f"{accepted_genus} {accepted_species}"] = self._format_record(
+                        accepted_genus, accepted_species, accepted_authors,
+                        accepted_genus, accepted_species, accepted_authors,
+                        "accepted"
+                    )
+
+                elif is_synonym_line and accepted_genus:
+                    syn_g, syn_s, syn_auth = self._split_species_and_authors(clean)
+                    self.species_dict[f"{syn_g} {syn_s}"] = self._format_record(
+                        syn_g, syn_s, syn_auth,
+                        accepted_genus, accepted_species, accepted_authors,
+                        "synonym"
+                    )
+
+    def lookup(self, name):
+        return self.species_dict.get(name)
+
+    def all_names(self):
+        return list(self.species_dict.keys())
+
+    def to_json(self, filepath=None):
+        """
+        Return or save the dictionary as JSON.
+        
+        Args:
+            filepath (str or None): if provided, writes to this file.
+        
+        Returns:
+            str: JSON string if filepath is None
+        """
+        json_data = json.dumps(self.species_dict, indent=2, ensure_ascii=False)
+        if filepath:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(json_data)
+        return json_data
+
+    def grouped_by_accepted(self):
+        """
+        Return a nested dictionary of accepted names and their synonyms.
+        
+        Returns:
+            dict: {accepted_name: {'authors': str, 'synonyms': [dict, ...]}}
+        """
+        grouped = {}
+        for record in self.species_dict.values():
+            acc_name = record["accepted_name"]
+            acc_auth = record["accepted_authors"]
+            if record["relationship"] == "accepted":
+                grouped[acc_name] = {
+                    "authors": acc_auth,
+                    "synonyms": []
+                }
+            elif record["relationship"] == "synonym":
+                if acc_name not in grouped:
+                    grouped[acc_name] = {
+                        "authors": acc_auth,
+                        "synonyms": []
                     }
+                grouped[acc_name]["synonyms"].append(record)
+        return grouped
 
-                    # Ensure accepted name also recorded
-                    if acc_species not in species_dict:
-                        species_dict[acc_species] = {
-                            "species": acc_species,
-                            "authors": acc_authors,
-                            "accepted_name": acc_species,
-                            "accepted_authors": acc_authors,
-                            "relationship": "accepted"
-                        }
+    def to_dataframe(self):
+        """
+        Return a pandas DataFrame from the species dictionary,
+        with 'name' as a column instead of the index.
+        
+        Returns:
+            pandas.DataFrame
+        """
+        records = []
+        for name, record in self.species_dict.items():
+            row = {"name": name}
+            row.update(record)
+            records.append(row)
+        return pd.DataFrame(records)
 
-                continue
+    def accepted_with_synonyms(self):
+        """
+        Return a dict mapping each accepted scientific name to a list of its synonyms.
+        
+        Returns:
+            dict: {accepted_name: [synonym_name_1, synonym_name_2, ...]}
+        """
+        grouped = {}
+        for name, record in self.species_dict.items():
+            if record["relationship"] == "accepted":
+                grouped[record["scientific_name"]] = []
+        
+        for name, record in self.species_dict.items():
+            if record["relationship"] == "synonym":
+                acc_name = record["accepted_name"]
+                if acc_name not in grouped:
+                    grouped[acc_name] = []
+                grouped[acc_name].append(record["scientific_name"])
+        
+        return grouped
 
-            # Case: synonym indented under last accepted name
-            if indent > 0 and accepted_species:
-                syn_species, syn_authors = split_species_and_authors(clean)
-                species_dict[syn_species] = {
-                    "species": syn_species,
-                    "authors": syn_authors,
-                    "accepted_name": accepted_species,
-                    "accepted_authors": accepted_authors,
-                    "relationship": "synonym"
-                }
-                continue
-
-            # Case: new accepted name (no =/+ at start)
-            if not is_synonym_line:
-                accepted_species, accepted_authors = split_species_and_authors(clean)
-                species_dict[accepted_species] = {
-                    "species": accepted_species,
-                    "authors": accepted_authors,
-                    "accepted_name": accepted_species,
-                    "accepted_authors": accepted_authors,
-                    "relationship": "accepted"
-                }
-
-            # Case: synonym with no mapped accepted name (e.g., standalone "+Name Author")
-            elif is_synonym_line and accepted_species:
-                syn_species, syn_authors = split_species_and_authors(clean)
-                species_dict[syn_species] = {
-                    "species": syn_species,
-                    "authors": syn_authors,
-                    "accepted_name": accepted_species,
-                    "accepted_authors": accepted_authors,
-                    "relationship": "synonym"
-                }
-
-    return species_dict
+    def names_with_accepted(self):
+        """
+        Return a flat dict mapping each name (synonym or accepted) to its accepted name.
+        
+        Returns:
+            dict: {name: accepted_name}
+        """
+        name_map = {}
+        for name, record in self.species_dict.items():
+            name_map[name] = record["accepted_name"]
+        return name_map
