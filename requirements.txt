@@ -1,7 +1,0 @@
-numpy
-pandas
-openpyxl
-matplotlib
-cartopy
-pykdtree
-rasterio

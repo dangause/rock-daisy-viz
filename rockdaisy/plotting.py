@@ -323,3 +323,134 @@ def plot_geographical_heatmap_overlay(
     ax.legend(handles=legend_patches, loc='center left', bbox_to_anchor=(1.01, 0.5), title=group_label)
     plt.tight_layout()
     plt.show()
+
+
+def plot_3d_relief_with_species(
+    tif_path,
+    df,
+    lat_col='decimallatitude_wgs',
+    lon_col='decimallongitude_wgs',
+    group_col='speciesCurated',     # ← NEW (was: species_col)
+    group_label='Species',          # ← NEW (legend/display name)
+    bbox=None,
+    elev_exaggeration=0.001,
+    point_size=10.0,
+    colormap='terrain',
+    lift_above_surface=5.0,
+    surface_patch_scale=1.5,
+    surface_opacity=1
+):
+    import pyvista as pv
+    import rasterio
+    import numpy as np
+    from matplotlib import cm
+
+    with rasterio.open(tif_path) as src:
+        if bbox:
+            minx, maxx, miny, maxy = bbox
+            row_start, col_start = src.index(minx, maxy)
+            row_stop, col_stop = src.index(maxx, miny)
+            row_start, row_stop = sorted([row_start, row_stop])
+            col_start, col_stop = sorted([col_start, col_stop])
+            window = rasterio.windows.Window(col_start, row_start, col_stop - col_start, row_stop - row_start)
+            elevation = src.read(1, window=window)
+            top_left_x, top_left_y = src.xy(row_start, col_start)
+            bottom_right_x, bottom_right_y = src.xy(row_stop, col_stop)
+        else:
+            elevation = src.read(1)
+            top_left_x, top_left_y = src.xy(0, 0)
+            bottom_right_x, bottom_right_y = src.xy(src.height - 1, src.width - 1)
+
+    elevation = np.where(elevation == src.nodata, np.nan, elevation)
+
+    n_rows, n_cols = elevation.shape
+    x = np.linspace(top_left_x, bottom_right_x, n_cols)
+    y = np.linspace(top_left_y, bottom_right_y, n_rows)
+    y = y[::-1]
+
+    xx, yy = np.meshgrid(x, y)
+    zz = elevation * elev_exaggeration
+    surface = pv.StructuredGrid(xx, yy, zz)
+
+    if bbox:
+        min_lon, max_lon, min_lat, max_lat = bbox
+        df = df[
+            (df[lon_col] >= min_lon) & (df[lon_col] <= max_lon) &
+            (df[lat_col] >= min_lat) & (df[lat_col] <= max_lat)
+        ]
+    if df.empty:
+        print("No points inside bounding box. Only surface will be plotted.")
+
+    # Grouping
+    unique_groups = df[group_col].unique()
+    cmap = cm.get_cmap('tab20')
+    colors = [cmap(i / len(unique_groups))[:3] for i in range(len(unique_groups))]
+    group_color_map = {group: colors[i] for i, group in enumerate(unique_groups)}
+    legend_entries = [(group, group_color_map[group]) for group in unique_groups]
+
+    # Paint base surface colors
+    surface_points = surface.points
+    z = surface_points[:, 2]
+    z_min, z_max = np.nanmin(z), np.nanmax(z)
+    norm_z = (z - z_min) / (z_max - z_min) if (z_max - z_min) > 0 else z
+    base_cmap = cm.get_cmap(colormap)
+    base_colors = base_cmap(norm_z)[:, :3]
+    vertex_colors = base_colors.copy()
+
+    cell_width = x[1] - x[0]
+    cell_height = abs(y[0] - y[1])
+    patch_radius = max(cell_width, cell_height) * surface_patch_scale
+    pts_xy = surface_points[:, :2]
+
+    for group in unique_groups:
+        group_color = group_color_map[group]
+        group_subset = df[df[group_col] == group]
+        for _, row in group_subset.iterrows():
+            lon_pt = row[lon_col]
+            lat_pt = row[lat_col]
+            dist = np.sqrt((pts_xy[:, 0] - lon_pt) ** 2 + (pts_xy[:, 1] - lat_pt) ** 2)
+            mask = dist < patch_radius
+            vertex_colors[mask] = group_color
+
+    surface.point_data["RGB"] = (vertex_colors * 255).astype(np.uint8)
+
+    # Plotting
+    plotter = pv.Plotter()
+    plotter.add_mesh(surface, scalars="RGB", rgb=True, smooth_shading=True, opacity=surface_opacity)
+
+    for group in unique_groups:
+        group_subset = df[df[group_col] == group]
+        pts = np.column_stack((group_subset[lon_col], group_subset[lat_col]))
+        z_values = np.full(len(pts), np.nan)
+        for i, (lon, lat) in enumerate(pts):
+            col_idx = np.argmin(np.abs(x - lon))
+            row_idx = np.argmin(np.abs(y - lat))
+            if 0 <= row_idx < zz.shape[0] and 0 <= col_idx < zz.shape[1]:
+                z_values[i] = zz[row_idx, col_idx]
+        scatter_points = np.column_stack((pts[:, 0], pts[:, 1], z_values + lift_above_surface))
+        plotter.add_points(
+            scatter_points,
+            color=group_color_map[group],
+            point_size=point_size,
+            render_points_as_spheres=True,
+            label=group
+        )
+
+    plotter.show_bounds(
+        xtitle='Longitude (°)',
+        ytitle='Latitude (°)',
+        ztitle='Elevation (m)',
+        location='outer',
+        all_edges=True
+    )
+
+    plotter.add_legend(
+        legend_entries,
+        border=True,
+        bcolor='white',
+        face='circle',
+        size=(0.15, 0.2),
+        loc='upper right'
+    )
+
+    plotter.show()
