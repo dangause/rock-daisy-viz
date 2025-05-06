@@ -17,3 +17,11 @@ dependencies = [
 
 [tool.setuptools]
 packages = ["rockdaisy"]  # <-- your actual package directory
+
+[tool.uv.sources]
+rock-daisy-viz = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "rock-daisy-viz",
+]
