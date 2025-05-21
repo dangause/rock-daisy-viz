@@ -8,33 +8,75 @@ class Nomenclator:
         self._parse_file(filepath)
 
     def _split_species_and_authors(self, name_str):
-        """
-        Split into genus, species, and authors, applying capitalization rules:
-        - Genus: Capitalize first letter only
-        - Species: all lowercase
-        """
         parts = name_str.strip().split()
+
         if len(parts) < 2:
-            return None, None, name_str.strip()
+            return None, None, None, None, None, name_str.strip()
+
         genus = parts[0].capitalize()
         species = parts[1].lower()
-        authors = " ".join(parts[2:]) if len(parts) > 2 else ""
-        return genus, species, authors
 
+        variety = None
+        variety_original_author = None
+        variety_combination_author = None
+        authors = ""
 
-    def _format_record(self, genus, species, authors, acc_genus, acc_species, acc_authors, relationship):
-        return {
-            "scientific_name": f"{genus} {species}",
+        if "var." in parts:
+            var_index = parts.index("var.")
+            variety = parts[var_index + 1].lower()
+            remaining = parts[var_index + 2:]
+        else:
+            remaining = parts[2:]
+
+        if remaining:
+            joined = " ".join(remaining)
+            var_orig_match = re.search(r"\\(([^)]+)\\)", joined)
+            if var_orig_match:
+                variety_original_author = var_orig_match.group(1).strip()
+                variety_combination_author = re.sub(r"\\([^)]+\\)", "", joined).strip()
+            else:
+                variety_combination_author = joined.strip()
+
+        if not variety:
+            authors = variety_combination_author
+            variety_combination_author = None
+
+        return genus, species, variety, variety_original_author, variety_combination_author, authors
+
+    def _format_record(self, genus, species, authors, acc_genus, acc_species, acc_authors, relationship,
+                       variety=None, variety_original_author=None, variety_combination_author=None):
+        if variety:
+            name_key = f"{genus} {species} var. {variety}"
+            scientific_name = name_key
+            if variety_original_author:
+                scientific_name += f" ({variety_original_author})"
+            if variety_combination_author:
+                scientific_name += f" {variety_combination_author}"
+        else:
+            name_key = f"{genus} {species}"
+            scientific_name = name_key
+            if authors:
+                scientific_name += f" {authors}"
+
+        acc_key = f"{acc_genus} {acc_species}" + (f" var. {variety}" if variety else "")
+
+        record = {
+            "scientific_name": scientific_name,
             "genus": genus,
             "species": species,
             "authors": authors,
-            "accepted_name": f"{acc_genus} {acc_species}",
+            "accepted_name": acc_key,
             "accepted_authors": acc_authors,
-            "relationship": relationship
+            "relationship": relationship,
+            "variety": variety,
+            "variety_original_author": variety_original_author,
+            "variety_combination_author": variety_combination_author
         }
+        return record
 
     def _parse_file(self, filepath):
         accepted_genus = accepted_species = accepted_authors = None
+        accepted_variety = accepted_var_orig = accepted_var_comb = None
 
         with open(filepath, 'r', encoding='utf-8') as f:
             for line in f:
@@ -51,46 +93,66 @@ class Nomenclator:
                     parts = [p.strip() for p in re.split(r'\s*=\s*', clean)]
                     if len(parts) == 2:
                         syn_full, acc_full = parts
-                        syn_g, syn_s, syn_auth = self._split_species_and_authors(syn_full)
-                        acc_g, acc_s, acc_auth = self._split_species_and_authors(acc_full)
+                        syn_g, syn_s, syn_var, syn_var_orig, syn_var_comb, syn_auth = self._split_species_and_authors(syn_full)
+                        acc_g, acc_s, acc_var, acc_var_orig, acc_var_comb, acc_auth = self._split_species_and_authors(acc_full)
 
-                        if syn_g and acc_g:
-                            self.species_dict[f"{syn_g} {syn_s}"] = self._format_record(
-                                syn_g, syn_s, syn_auth,
+                        syn_key = f"{syn_g} {syn_s}" + (f" var. {syn_var}" if syn_var else "")
+                        acc_key = f"{acc_g} {acc_s}" + (f" var. {acc_var}" if acc_var else "")
+
+                        self.species_dict[syn_key] = self._format_record(
+                            syn_g, syn_s, syn_auth,
+                            acc_g, acc_s, acc_auth,
+                            "synonym",
+                            variety=syn_var,
+                            variety_original_author=syn_var_orig,
+                            variety_combination_author=syn_var_comb
+                        )
+                        if acc_key not in self.species_dict:
+                            self.species_dict[acc_key] = self._format_record(
                                 acc_g, acc_s, acc_auth,
-                                "synonym"
+                                acc_g, acc_s, acc_auth,
+                                "accepted",
+                                variety=acc_var,
+                                variety_original_author=acc_var_orig,
+                                variety_combination_author=acc_var_comb
                             )
-                            if f"{acc_g} {acc_s}" not in self.species_dict:
-                                self.species_dict[f"{acc_g} {acc_s}"] = self._format_record(
-                                    acc_g, acc_s, acc_auth,
-                                    acc_g, acc_s, acc_auth,
-                                    "accepted"
-                                )
                     continue
 
                 if indent > 0 and accepted_genus:
-                    syn_g, syn_s, syn_auth = self._split_species_and_authors(clean)
-                    self.species_dict[f"{syn_g} {syn_s}"] = self._format_record(
+                    syn_g, syn_s, syn_var, syn_var_orig, syn_var_comb, syn_auth = self._split_species_and_authors(clean)
+                    syn_key = f"{syn_g} {syn_s}" + (f" var. {syn_var}" if syn_var else "")
+                    self.species_dict[syn_key] = self._format_record(
                         syn_g, syn_s, syn_auth,
                         accepted_genus, accepted_species, accepted_authors,
-                        "synonym"
+                        "synonym",
+                        variety=syn_var,
+                        variety_original_author=syn_var_orig,
+                        variety_combination_author=syn_var_comb
                     )
                     continue
 
                 if not is_synonym_line:
-                    accepted_genus, accepted_species, accepted_authors = self._split_species_and_authors(clean)
-                    self.species_dict[f"{accepted_genus} {accepted_species}"] = self._format_record(
+                    accepted_genus, accepted_species, accepted_variety, accepted_var_orig, accepted_var_comb, accepted_authors = self._split_species_and_authors(clean)
+                    acc_key = f"{accepted_genus} {accepted_species}" + (f" var. {accepted_variety}" if accepted_variety else "")
+                    self.species_dict[acc_key] = self._format_record(
                         accepted_genus, accepted_species, accepted_authors,
                         accepted_genus, accepted_species, accepted_authors,
-                        "accepted"
+                        "accepted",
+                        variety=accepted_variety,
+                        variety_original_author=accepted_var_orig,
+                        variety_combination_author=accepted_var_comb
                     )
 
                 elif is_synonym_line and accepted_genus:
-                    syn_g, syn_s, syn_auth = self._split_species_and_authors(clean)
-                    self.species_dict[f"{syn_g} {syn_s}"] = self._format_record(
+                    syn_g, syn_s, syn_var, syn_var_orig, syn_var_comb, syn_auth = self._split_species_and_authors(clean)
+                    syn_key = f"{syn_g} {syn_s}" + (f" var. {syn_var}" if syn_var else "")
+                    self.species_dict[syn_key] = self._format_record(
                         syn_g, syn_s, syn_auth,
                         accepted_genus, accepted_species, accepted_authors,
-                        "synonym"
+                        "synonym",
+                        variety=syn_var,
+                        variety_original_author=syn_var_orig,
+                        variety_combination_author=syn_var_comb
                     )
 
     def lookup(self, name):
@@ -100,15 +162,6 @@ class Nomenclator:
         return list(self.species_dict.keys())
 
     def to_json(self, filepath=None):
-        """
-        Return or save the dictionary as JSON.
-        
-        Args:
-            filepath (str or None): if provided, writes to this file.
-        
-        Returns:
-            str: JSON string if filepath is None
-        """
         json_data = json.dumps(self.species_dict, indent=2, ensure_ascii=False)
         if filepath:
             with open(filepath, 'w', encoding='utf-8') as f:
@@ -116,12 +169,6 @@ class Nomenclator:
         return json_data
 
     def grouped_by_accepted(self):
-        """
-        Return a nested dictionary of accepted names and their synonyms.
-        
-        Returns:
-            dict: {accepted_name: {'authors': str, 'synonyms': [dict, ...]}}
-        """
         grouped = {}
         for record in self.species_dict.values():
             acc_name = record["accepted_name"]
@@ -141,49 +188,53 @@ class Nomenclator:
         return grouped
 
     def to_dataframe(self):
-        """
-        Return a pandas DataFrame from the species dictionary,
-        with 'name' as a column instead of the index.
-        
-        Returns:
-            pandas.DataFrame
-        """
         records = []
         for name, record in self.species_dict.items():
             row = {"name": name}
-            row.update(record)
+            for key in ["scientific_name", "genus", "species", "authors", "accepted_name",
+                        "accepted_authors", "relationship", "variety", "variety_original_author", "variety_combination_author"]:
+                row[key] = record.get(key, None)
             records.append(row)
         return pd.DataFrame(records)
 
     def accepted_with_synonyms(self):
-        """
-        Return a dict mapping each accepted scientific name to a list of its synonyms.
-        
-        Returns:
-            dict: {accepted_name: [synonym_name_1, synonym_name_2, ...]}
-        """
         grouped = {}
         for name, record in self.species_dict.items():
             if record["relationship"] == "accepted":
                 grouped[record["scientific_name"]] = []
-        
         for name, record in self.species_dict.items():
             if record["relationship"] == "synonym":
                 acc_name = record["accepted_name"]
                 if acc_name not in grouped:
                     grouped[acc_name] = []
                 grouped[acc_name].append(record["scientific_name"])
-        
         return grouped
 
     def names_with_accepted(self):
-        """
-        Return a flat dict mapping each name (synonym or accepted) to its accepted name.
-        
-        Returns:
-            dict: {name: accepted_name}
-        """
         name_map = {}
         for name, record in self.species_dict.items():
             name_map[name] = record["accepted_name"]
         return name_map
+
+    def filter_by(self, relationship=None, genus=None):
+        return {
+            name: rec for name, rec in self.species_dict.items()
+            if (relationship is None or rec['relationship'] == relationship)
+            and (genus is None or rec['genus'].lower() == genus.lower())
+        }
+
+    def fuzzy_lookup(self, query):
+        query_norm = query.strip().lower().replace("var.", "var")
+        return {
+            name: rec for name, rec in self.species_dict.items()
+            if query_norm in name.lower().replace("var.", "var")
+        }
+
+    def normalize_name(self, genus, species, variety=None):
+        genus = genus.capitalize()
+        species = species.lower()
+        if variety:
+            variety = variety.lower()
+            return f"{genus} {species} var. {variety}"
+        else:
+            return f"{genus} {species}"
