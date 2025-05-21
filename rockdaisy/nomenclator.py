@@ -9,7 +9,6 @@ class Nomenclator:
 
     def _split_species_and_authors(self, name_str):
         parts = name_str.strip().split()
-
         if len(parts) < 2:
             return None, None, None, None, None, name_str.strip()
 
@@ -45,6 +44,7 @@ class Nomenclator:
 
     def _format_record(self, genus, species, authors, acc_genus, acc_species, acc_authors, relationship,
                        variety=None, variety_original_author=None, variety_combination_author=None):
+        # Construct scientific_name with authors included
         if variety:
             name_key = f"{genus} {species} var. {variety}"
             scientific_name = name_key
@@ -89,6 +89,7 @@ class Nomenclator:
                 is_synonym_line = stripped.startswith(('=', '+'))
                 clean = stripped.lstrip('=+').strip()
 
+                # Handle synonym = accepted pattern
                 if '=' in clean and is_synonym_line:
                     parts = [p.strip() for p in re.split(r'\s*=\s*', clean)]
                     if len(parts) == 2:
@@ -118,6 +119,7 @@ class Nomenclator:
                             )
                     continue
 
+                # Handle indented synonyms under an accepted block
                 if indent > 0 and accepted_genus:
                     syn_g, syn_s, syn_var, syn_var_orig, syn_var_comb, syn_auth = self._split_species_and_authors(clean)
                     syn_key = f"{syn_g} {syn_s}" + (f" var. {syn_var}" if syn_var else "")
@@ -131,6 +133,7 @@ class Nomenclator:
                     )
                     continue
 
+                # Start new accepted block
                 if not is_synonym_line:
                     accepted_genus, accepted_species, accepted_variety, accepted_var_orig, accepted_var_comb, accepted_authors = self._split_species_and_authors(clean)
                     acc_key = f"{accepted_genus} {accepted_species}" + (f" var. {accepted_variety}" if accepted_variety else "")
@@ -143,6 +146,7 @@ class Nomenclator:
                         variety_combination_author=accepted_var_comb
                     )
 
+                # Handle synonym line in accepted context
                 elif is_synonym_line and accepted_genus:
                     syn_g, syn_s, syn_var, syn_var_orig, syn_var_comb, syn_auth = self._split_species_and_authors(clean)
                     syn_key = f"{syn_g} {syn_s}" + (f" var. {syn_var}" if syn_var else "")
@@ -188,12 +192,27 @@ class Nomenclator:
         return grouped
 
     def to_dataframe(self):
+        def extract_gbif_authors(author_str):
+            if not author_str:
+                return ""
+            # Extract only surname from each part, keep parenthetical authors and outer ones
+            parts = re.findall(r'\(([^)]+)\)', author_str)
+            remaining = re.sub(r'\([^)]*\)', '', author_str).strip()
+            final = []
+            if parts:
+                final.append(f"({parts[0].split()[-1]})")
+            if remaining:
+                final.append(remaining.split()[-1])
+            return " ".join(final)
+
         records = []
         for name, record in self.species_dict.items():
             row = {"name": name}
             for key in ["scientific_name", "genus", "species", "authors", "accepted_name",
                         "accepted_authors", "relationship", "variety", "variety_original_author", "variety_combination_author"]:
                 row[key] = record.get(key, None)
+            row["gbif_scientific_name"] = f"{record['genus']} {record['species']} {extract_gbif_authors(record['authors'])}".strip()
+            row["accepted_gbif_name"] = f"{record['genus']} {record['species']} {extract_gbif_authors(record['accepted_authors'])}".strip()
             records.append(row)
         return pd.DataFrame(records)
 
