@@ -55,24 +55,29 @@ from matplotlib import colormaps
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+from cartopy.io import shapereader as shpreader
+from cartopy.io.shapereader import Reader
+import matplotlib.cm as colormaps
+import numpy as np
 import rasterio
 from rasterio.plot import show as rio_show
-from cartopy.io.shapereader import Reader
-import cartopy.io.shapereader as shpreader
-from matplotlib import colormaps
+from matplotlib.colors import LightSource, Normalize
 
 def plot_geographical_positions(
     df, 
     lat_col='decimallatitude_wgs', 
     lon_col='decimallongitude_wgs',
     group_col='speciesCurated',
-    group_label='Species',  # NEW: custom name for legend and title
+    group_label='Species',
     zoom='auto',
     cluster_line=False,
     plot_roads=False,
     plot_rivers=False,
     raster_path=None,
-    bbox=None
+    bbox=None,
+    hillshade_overlay=False,
+    plot_borders=True,
+    save_path=None
 ):
     projection = ccrs.PlateCarree()
     fig, ax = plt.subplots(figsize=(12, 8), subplot_kw={'projection': projection})
@@ -92,13 +97,31 @@ def plot_geographical_positions(
     # Raster background
     if raster_path:
         with rasterio.open(raster_path) as src:
-            rio_show(src, ax=ax, transform=src.transform)
+            if hillshade_overlay:
+                elevation = src.read(1)
+                # elevation = np.where(elevation == src.nodata, np.nan, elevation)
 
-    # Base map features
-    ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
-    ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=0.5)
-    ax.add_feature(cfeature.LAND, edgecolor='black', alpha=0.3)
-    ax.add_feature(cfeature.OCEAN, alpha=0.3)
+                # Compute hillshade
+                ls = LightSource(azdeg=315, altdeg=45)
+                cmap = plt.cm.Blues_r  # Or cmocean.cm.deep if installed
+                shaded = ls.shade(elevation, cmap=cmap, vert_exag=1, blend_mode='overlay')
+
+                ax.imshow(
+                    shaded,
+                    extent=[src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top],
+                    transform=ccrs.PlateCarree(),
+                    origin='upper'
+                )
+            else:
+                rio_show(src, ax=ax, transform=src.transform)
+
+    if plot_borders:
+        # Base map features
+        ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
+        ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=0.5)
+        ax.add_feature(cfeature.LAND, edgecolor='black', alpha=0.3)
+        ax.add_feature(cfeature.OCEAN, alpha=0.3)
+        
 
     if plot_rivers:
         ax.add_feature(cfeature.RIVERS, edgecolor='blue', alpha=0.7, linewidth=0.5)
@@ -159,9 +182,12 @@ def plot_geographical_positions(
         title=group_label,
         frameon=True
     )
-
     plt.tight_layout()
-    plt.show()
+    if save_path:
+        plt.savefig(save_path, format='pdf', bbox_inches='tight', dpi=600)
+        print(f"Plot saved to {save_path}")
+    else:
+        plt.show()
 
 
 def plot_geographical_heatmap_overlay(
@@ -176,7 +202,8 @@ def plot_geographical_heatmap_overlay(
     plot_rivers=False,
     plot_roads=False,
     max_groups=10,
-    show_density_labels=False
+    show_density_labels=False,
+    save_path=None
 ):
     import numpy as np
     import matplotlib.pyplot as plt
@@ -322,7 +349,12 @@ def plot_geographical_heatmap_overlay(
     ax.set_title(f"Overlaid {group_label} Heatmaps with Density Labels", fontsize=14)
     ax.legend(handles=legend_patches, loc='center left', bbox_to_anchor=(1.01, 0.5), title=group_label)
     plt.tight_layout()
-    plt.show()
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, format='pdf', bbox_inches='tight', dpi=600)
+        print(f"Plot saved to {save_path}")
+    else:
+        plt.show()
 
 
 def plot_3d_relief_with_species(
@@ -338,7 +370,8 @@ def plot_3d_relief_with_species(
     colormap='terrain',
     lift_above_surface=5.0,
     surface_patch_scale=1.5,
-    surface_opacity=1
+    surface_opacity=1,
+    save_path=None
 ):
     import pyvista as pv
     import rasterio
@@ -453,4 +486,11 @@ def plot_3d_relief_with_species(
         loc='upper right'
     )
 
-    plotter.show()
+    if save_path:
+        plotter.show(auto_close=False)
+        image_dpi=600
+        plotter.screenshot(save_path, window_size=(image_dpi * 12, image_dpi * 8), scale=1.0)
+        plotter.close()
+        print(f"3D plot saved to {save_path}")
+    else:
+        plotter.show()
