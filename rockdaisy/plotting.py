@@ -1,71 +1,20 @@
-import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
 import numpy as np
 import pandas as pd
-from cartopy.io.shapereader import Reader
-import cartopy.io.shapereader as shpreader
-import matplotlib.colors as mcolors
-from matplotlib.colors import LogNorm
+import matplotlib.pyplot as plt
 import matplotlib.cm as cm
-
-def plot_time_histogram(df, datetime_col='datetime', bins='auto'):
-    """
-    Plots a histogram of records over time.
-
-    Parameters:
-    - df (pd.DataFrame): DataFrame containing a datetime column.
-    - datetime_col (str): Name of the datetime column.
-    - bins (str or int): Number of bins ('auto' for automatic binning or int for manual).
-    """
-    # Ensure the datetime column is in datetime format
-    df[datetime_col] = pd.to_datetime(df[datetime_col])
-
-    # Create the figure
-    fig, ax = plt.subplots(figsize=(12, 6))
-
-    # Plot histogram
-    counts, bin_edges, _ = ax.hist(
-        df[datetime_col], bins=bins, edgecolor='black', alpha=0.7
-    )
-
-    # Format x-axis for date readability
-    ax.xaxis.set_major_locator(plt.MaxNLocator(10))
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Number of Records')
-    ax.set_title('Records Over Time')
-
-    # Rotate x-ticks for better readability
-    plt.xticks(rotation=45)
-
-    # Show the plot
-    plt.tight_layout()
-    plt.show()
-
-
-import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.colors import LogNorm, LightSource, LinearSegmentedColormap, to_rgb
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
-import rasterio
-from rasterio.plot import show as rio_show
-from cartopy.io.shapereader import Reader
 import cartopy.io.shapereader as shpreader
-from matplotlib import colormaps
-
-import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
-from cartopy.io import shapereader as shpreader
 from cartopy.io.shapereader import Reader
-import matplotlib.cm as colormaps
-import numpy as np
 import rasterio
 from rasterio.plot import show as rio_show
-from matplotlib.colors import LightSource, Normalize
+
 
 def plot_geographical_positions(
-    df, 
-    lat_col='decimallatitude_wgs', 
+    df,
+    lat_col='decimallatitude_wgs',
     lon_col='decimallongitude_wgs',
     group_col='speciesCurated',
     group_label='Species',
@@ -79,6 +28,40 @@ def plot_geographical_positions(
     plot_borders=True,
     save_path=None
 ):
+    """
+    Plot species occurrences on a cartopy basemap with optional raster background.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing latitude, longitude, and group columns.
+    lat_col : str
+        Column name for latitude values.
+    lon_col : str
+        Column name for longitude values.
+    group_col : str
+        Column name used to color-code scatter points.
+    group_label : str
+        Display label for the legend title.
+    zoom : str
+        Zoom level (reserved for future use).
+    cluster_line : bool
+        If True, draw connecting lines between points within each group.
+    plot_roads : bool
+        If True, overlay Natural Earth road geometries.
+    plot_rivers : bool
+        If True, overlay Natural Earth river features.
+    raster_path : str or None
+        Path to a GeoTIFF raster for the background layer.
+    bbox : list of float or None
+        Bounding box as [min_lon, max_lon, min_lat, max_lat].
+    hillshade_overlay : bool
+        If True, render the raster as a hillshade instead of raw display.
+    plot_borders : bool
+        If True, draw coastlines, borders, and land/ocean features.
+    save_path : str or None
+        If provided, save the figure as a PDF to this path.
+    """
     projection = ccrs.PlateCarree()
     fig, ax = plt.subplots(figsize=(12, 8), subplot_kw={'projection': projection})
 
@@ -99,11 +82,9 @@ def plot_geographical_positions(
         with rasterio.open(raster_path) as src:
             if hillshade_overlay:
                 elevation = src.read(1)
-                # elevation = np.where(elevation == src.nodata, np.nan, elevation)
 
-                # Compute hillshade
                 ls = LightSource(azdeg=315, altdeg=45)
-                cmap = plt.cm.Blues_r  # Or cmocean.cm.deep if installed
+                cmap = plt.cm.Blues_r
                 shaded = ls.shade(elevation, cmap=cmap, vert_exag=1, blend_mode='overlay')
 
                 ax.imshow(
@@ -116,12 +97,10 @@ def plot_geographical_positions(
                 rio_show(src, ax=ax, transform=src.transform)
 
     if plot_borders:
-        # Base map features
         ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
         ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=0.5)
         ax.add_feature(cfeature.LAND, edgecolor='black', alpha=0.3)
         ax.add_feature(cfeature.OCEAN, alpha=0.3)
-        
 
     if plot_rivers:
         ax.add_feature(cfeature.RIVERS, edgecolor='blue', alpha=0.7, linewidth=0.5)
@@ -132,7 +111,7 @@ def plot_geographical_positions(
 
     # Color by group
     group_list = df[group_col].dropna().unique()
-    cmap = colormaps.get_cmap('tab20')
+    cmap = cm.get_cmap('tab20')
     color_map = {group: cmap(i / len(group_list)) for i, group in enumerate(group_list)}
 
     for group in group_list:
@@ -205,17 +184,41 @@ def plot_geographical_heatmap_overlay(
     show_density_labels=False,
     save_path=None
 ):
-    import numpy as np
-    import matplotlib.pyplot as plt
-    import matplotlib.patches as mpatches
-    import rasterio
-    from rasterio.plot import show as rio_show
-    import cartopy.crs as ccrs
-    import cartopy.feature as cfeature
-    from matplotlib.colors import LogNorm, LinearSegmentedColormap, to_rgb
-    from cartopy.io.shapereader import Reader
-    import cartopy.io.shapereader as shpreader
+    """
+    Overlay per-species density heatmaps on a cartopy basemap.
 
+    Each species group gets its own color-coded 2D histogram rendered with
+    logarithmic normalization. The densest cell for each group is labeled.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing latitude, longitude, and group columns.
+    lat_col : str
+        Column name for latitude values.
+    lon_col : str
+        Column name for longitude values.
+    group_col : str
+        Column name used to separate species for individual heatmaps.
+    group_label : str
+        Display label for the legend title.
+    raster_path : str or None
+        Path to a GeoTIFF raster for the background layer.
+    grid_size : int
+        Number of bins along each axis for the 2D histogram.
+    bbox : list of float or None
+        Bounding box as [min_lon, max_lon, min_lat, max_lat].
+    plot_rivers : bool
+        If True, overlay river features.
+    plot_roads : bool
+        If True, overlay road geometries.
+    max_groups : int
+        Maximum number of species groups to plot.
+    show_density_labels : bool
+        If True, annotate each grid cell with its count.
+    save_path : str or None
+        If provided, save the figure as a PDF to this path.
+    """
     base_colors = [
         '#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00',
         '#a65628', '#f781bf', '#999999', '#66c2a5', '#d95f02'
@@ -274,15 +277,15 @@ def plot_geographical_heatmap_overlay(
     for idx, group in enumerate(group_list):
         base_rgb = np.array(to_rgb(base_colors[idx % len(base_colors)]))
         light_rgb = base_rgb + (1 - base_rgb) * 0.4
-        cmap = LinearSegmentedColormap.from_list(
+        group_cmap = LinearSegmentedColormap.from_list(
             f"{group}_fade", [light_rgb, base_rgb], N=256
         )
-        color_map[group] = cmap
+        color_map[group] = group_cmap
         legend_patches.append(mpatches.Patch(color=base_rgb, label=group))
 
     # Plot heatmaps
     for group in group_list:
-        cmap = color_map[group]
+        group_cmap = color_map[group]
         subset = df[df[group_col] == group]
         if subset.empty:
             continue
@@ -297,7 +300,7 @@ def plot_geographical_heatmap_overlay(
 
         ax.pcolormesh(
             lon_grid, lat_grid, heatmap.T,
-            cmap=cmap,
+            cmap=group_cmap,
             norm=LogNorm(vmin=1, vmax=np.max(heatmap) + 1),
             alpha=0.85,
             transform=projection
@@ -349,7 +352,6 @@ def plot_geographical_heatmap_overlay(
     ax.set_title(f"Overlaid {group_label} Heatmaps with Density Labels", fontsize=14)
     ax.legend(handles=legend_patches, loc='center left', bbox_to_anchor=(1.01, 0.5), title=group_label)
     plt.tight_layout()
-    plt.tight_layout()
     if save_path:
         plt.savefig(save_path, format='pdf', bbox_inches='tight', dpi=600)
         print(f"Plot saved to {save_path}")
@@ -362,8 +364,8 @@ def plot_3d_relief_with_species(
     df,
     lat_col='decimallatitude_wgs',
     lon_col='decimallongitude_wgs',
-    group_col='speciesCurated',     # ← NEW (was: species_col)
-    group_label='Species',          # ← NEW (legend/display name)
+    group_col='speciesCurated',
+    group_label='Species',
     bbox=None,
     elev_exaggeration=0.001,
     point_size=10.0,
@@ -373,10 +375,45 @@ def plot_3d_relief_with_species(
     surface_opacity=1,
     save_path=None
 ):
+    """
+    Render an interactive 3D relief surface with species occurrences plotted on top.
+
+    Uses PyVista to display a DEM raster as a 3D mesh, with species occurrence
+    points rendered as colored spheres lifted above the terrain surface. Each
+    species group is painted onto the surface as colored patches.
+
+    Parameters
+    ----------
+    tif_path : str
+        Path to a GeoTIFF elevation raster.
+    df : pd.DataFrame
+        DataFrame containing latitude, longitude, and group columns.
+    lat_col : str
+        Column name for latitude values.
+    lon_col : str
+        Column name for longitude values.
+    group_col : str
+        Column name used to color-code species groups.
+    group_label : str
+        Display label for the legend.
+    bbox : list of float or None
+        Bounding box as [min_lon, max_lon, min_lat, max_lat].
+    elev_exaggeration : float
+        Vertical exaggeration factor applied to elevation values.
+    point_size : float
+        Size of scatter points on the 3D surface.
+    colormap : str
+        Matplotlib colormap name for the terrain surface.
+    lift_above_surface : float
+        Vertical offset to lift scatter points above the DEM surface.
+    surface_patch_scale : float
+        Multiplier for the radius of colored patches on the surface.
+    surface_opacity : float
+        Opacity of the base surface mesh (0 to 1).
+    save_path : str or None
+        If provided, take a screenshot and save to this path.
+    """
     import pyvista as pv
-    import rasterio
-    import numpy as np
-    from matplotlib import cm
 
     with rasterio.open(tif_path) as src:
         if bbox:
@@ -416,8 +453,8 @@ def plot_3d_relief_with_species(
 
     # Grouping
     unique_groups = df[group_col].unique()
-    cmap = cm.get_cmap('tab20')
-    colors = [cmap(i / len(unique_groups))[:3] for i in range(len(unique_groups))]
+    group_cmap = cm.get_cmap('tab20')
+    colors = [group_cmap(i / len(unique_groups))[:3] for i in range(len(unique_groups))]
     group_color_map = {group: colors[i] for i, group in enumerate(unique_groups)}
     legend_entries = [(group, group_color_map[group]) for group in unique_groups]
 
@@ -426,9 +463,9 @@ def plot_3d_relief_with_species(
     z = surface_points[:, 2]
     z_min, z_max = np.nanmin(z), np.nanmax(z)
     norm_z = (z - z_min) / (z_max - z_min) if (z_max - z_min) > 0 else z
-    base_cmap = cm.get_cmap(colormap)
-    base_colors = base_cmap(norm_z)[:, :3]
-    vertex_colors = base_colors.copy()
+    terrain_cmap = cm.get_cmap(colormap)
+    terrain_colors = terrain_cmap(norm_z)[:, :3]
+    vertex_colors = terrain_colors.copy()
 
     cell_width = x[1] - x[0]
     cell_height = abs(y[0] - y[1])
@@ -488,7 +525,7 @@ def plot_3d_relief_with_species(
 
     if save_path:
         plotter.show(auto_close=False)
-        image_dpi=600
+        image_dpi = 600
         plotter.screenshot(save_path, window_size=(image_dpi * 12, image_dpi * 8), scale=1.0)
         plotter.close()
         print(f"3D plot saved to {save_path}")

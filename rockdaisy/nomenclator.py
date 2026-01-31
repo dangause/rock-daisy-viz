@@ -3,11 +3,32 @@ import json
 import pandas as pd
 
 class Nomenclator:
+    """
+    Parser for curated Perityleae taxonomy files that maps species names,
+    including synonyms and infraspecific taxa, to their accepted names.
+
+    The input file uses indentation and prefix symbols (= and +) to indicate
+    synonym relationships. Each entry is parsed into a structured record with
+    genus, species, variety, authorship, and accepted-name fields.
+
+    Parameters
+    ----------
+    filepath : str
+        Path to the nomenclator text file.
+
+    Attributes
+    ----------
+    species_dict : dict
+        Dictionary mapping name keys (e.g., "Perityle emoryi") to record dicts.
+    """
+
     def __init__(self, filepath):
+        """Initialize Nomenclator by parsing the taxonomy file."""
         self.species_dict = {}
         self._parse_file(filepath)
 
     def _split_species_and_authors(self, name_str):
+        """Parse a full taxonomic name string into genus, species, variety, and authorship components."""
         parts = name_str.strip().split()
 
         if len(parts) < 2:
@@ -45,6 +66,7 @@ class Nomenclator:
 
     def _format_record(self, genus, species, authors, acc_genus, acc_species, acc_authors, relationship,
                        variety=None, variety_original_author=None, variety_combination_author=None):
+        """Construct a structured record dict from parsed taxonomic components."""
         if variety:
             name_key = f"{genus} {species} var. {variety}"
             scientific_name = name_key
@@ -75,6 +97,7 @@ class Nomenclator:
         return record
 
     def _parse_file(self, filepath):
+        """Parse the nomenclator text file and populate species_dict."""
         accepted_genus = accepted_species = accepted_authors = None
         accepted_variety = accepted_var_orig = accepted_var_comb = None
 
@@ -156,12 +179,15 @@ class Nomenclator:
                     )
 
     def lookup(self, name):
+        """Look up a species record by its name key. Returns None if not found."""
         return self.species_dict.get(name)
 
     def all_names(self):
+        """Return a list of all name keys in the nomenclator."""
         return list(self.species_dict.keys())
 
     def to_json(self, filepath=None):
+        """Serialize the species dictionary to JSON. Optionally write to a file."""
         json_data = json.dumps(self.species_dict, indent=2, ensure_ascii=False)
         if filepath:
             with open(filepath, 'w', encoding='utf-8') as f:
@@ -169,6 +195,7 @@ class Nomenclator:
         return json_data
 
     def grouped_by_accepted(self):
+        """Group all records by accepted name, collecting synonyms under each."""
         grouped = {}
         for record in self.species_dict.values():
             acc_name = record["accepted_name"]
@@ -188,6 +215,7 @@ class Nomenclator:
         return grouped
 
     def to_dataframe(self):
+        """Convert the species dictionary to a pandas DataFrame."""
         records = []
         for name, record in self.species_dict.items():
             row = {"name": name}
@@ -198,6 +226,7 @@ class Nomenclator:
         return pd.DataFrame(records)
 
     def accepted_with_synonyms(self):
+        """Return a dict mapping each accepted scientific name to its list of synonym names."""
         grouped = {}
         for name, record in self.species_dict.items():
             if record["relationship"] == "accepted":
@@ -211,12 +240,14 @@ class Nomenclator:
         return grouped
 
     def names_with_accepted(self):
+        """Return a dict mapping every name key to its corresponding accepted name."""
         name_map = {}
         for name, record in self.species_dict.items():
             name_map[name] = record["accepted_name"]
         return name_map
 
     def filter_by(self, relationship=None, genus=None):
+        """Filter records by taxonomic relationship and/or genus."""
         return {
             name: rec for name, rec in self.species_dict.items()
             if (relationship is None or rec['relationship'] == relationship)
@@ -224,6 +255,7 @@ class Nomenclator:
         }
 
     def fuzzy_lookup(self, query):
+        """Search for names containing the query string (case-insensitive)."""
         query_norm = query.strip().lower().replace("var.", "var")
         return {
             name: rec for name, rec in self.species_dict.items()
@@ -231,6 +263,7 @@ class Nomenclator:
         }
 
     def normalize_name(self, genus, species, variety=None):
+        """Construct a canonical name key from genus, species, and optional variety."""
         genus = genus.capitalize()
         species = species.lower()
         if variety:
