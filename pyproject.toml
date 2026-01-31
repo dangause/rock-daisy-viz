@@ -1,7 +1,7 @@
 [project]
 name = "rock-daisy-viz"
 version = "0.1.0"
-description = "Add your description here"
+description = "Visualization and analysis toolkit for Rock Daisies (tribe Perityleae)"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

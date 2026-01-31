@@ -9,28 +9,20 @@ This project provides tools for managing botanical nomenclature, querying specie
 ```
 rock-daisy-viz/
 ├── rockdaisy/                  # Python package
+│   ├── __init__.py             # Package exports
 │   ├── nomenclator.py          # Taxonomic nomenclature parser
-│   ├── plotting.py             # Geographic visualization functions
-│   └── main.py                 # Entry point (stub)
-├── notebooks/                  # Jupyter analysis notebooks
-│   ├── species_groupings_gbif.ipynb   # Primary: genus-level maps from GBIF data
-│   ├── species_groupings.ipynb        # Geographic maps by genus
-│   ├── rock_daisy_eda.ipynb           # Exploratory data analysis
-│   ├── sky_island_eda.ipynb           # Sky island geographic analysis
-│   ├── nomenclator.ipynb             # Nomenclator class demo/testing
-│   ├── gbif.ipynb                     # GBIF API demo
+│   └── plotting.py             # Geographic visualization functions
+├── notebooks/
+│   ├── species_groupings_gbif.ipynb   # Genus-level maps from GBIF data
 │   └── img/                           # Generated PDF maps
 ├── scripts/
 │   └── gbif_pull.py            # GBIF backbone API query script
-├── data/                       # Data files (git-ignored)
+├── data/                       # Data files (git/LFS; large rasters are local-only)
 │   ├── nomenclator.txt         # Curated taxonomy with synonymy
-│   ├── nomenclator.csv         # CSV export of nomenclature
-│   ├── gbif/                   # GBIF occurrence records
-│   ├── great_basin/            # Great Basin DEM rasters
-│   ├── guadalupe/              # Guadalupe Mountains rasters
-│   ├── sky_island/             # Sky island boundaries (KMZ)
-│   ├── HYP_HR_SR_OB_DR/       # NASA high-resolution DEM raster
-│   └── perityleae_distribution_data.xlsx
+│   ├── gbif/                   # GBIF occurrence records (raw + cleaned)
+│   ├── great_basin/            # Great Basin DEM raster (local-only)
+│   ├── guadalupe/              # Guadalupe Mountains DEM raster (LFS)
+│   └── HYP_HR_SR_OB_DR/       # Natural Earth raster (local-only)
 ├── pyproject.toml
 ├── uv.lock
 └── .python-version
@@ -53,22 +45,30 @@ brew install gdal proj
 ```bash
 git clone https://github.com/dangause/rock-daisy-viz.git
 cd rock-daisy-viz
+git lfs pull
 uv sync
 ```
 
-This creates a virtual environment and installs all dependencies from the lockfile.
+This pulls LFS-tracked data files, creates a virtual environment, and installs all dependencies from the lockfile.
 
 ## Data Setup
 
-The `data/` directory is git-ignored due to file sizes. You will need to obtain the following:
+Data files are stored in `data/` and tracked via **Git LFS** (binary files) or regular git (small text files). After cloning, run `git lfs pull` to download the LFS objects. Large rasters are intentionally excluded from version control to keep the repo small.
 
-| Path | Description | Source |
-|------|-------------|--------|
-| `data/nomenclator.txt` | Curated Perityleae taxonomy with synonymy | Included in repo |
-| `data/gbif/gbif_occurrences.csv` | Species occurrence records (~8,700 rows) | [GBIF](https://www.gbif.org/) export or `scripts/gbif_pull.py` |
-| `data/HYP_HR_SR_OB_DR/` | NASA high-resolution elevation raster | [Natural Earth](https://www.naturalearthdata.com/downloads/10m-raster-data/) |
-| `data/great_basin/` | Great Basin regional DEM | USGS or similar |
-| `data/perityleae_distribution_data.xlsx` | Curated distribution spreadsheet | Project-internal |
+| Path | Description | Tracked |
+|------|-------------|---------|
+| `data/nomenclator.txt` | Curated Perityleae taxonomy with synonymy | LFS |
+| `data/gbif/gbif_occurrences.csv` | Raw GBIF occurrence records (~8,700 rows) | LFS |
+| `data/gbif/gbif_occurrences_cleaned.csv` | Cleaned occurrences (outliers removed, synonyms mapped) | LFS |
+| `data/gbif/outliers.png` | Identified coordinate outliers | Git |
+| `data/guadalupe/output_SRTMGL3.tif` | Guadalupe Mountains DEM | LFS |
+
+### Large raster prerequisites (not versioned)
+
+These rasters are required for some maps but are **not stored in git/LFS**. Download or generate them and place them at the paths below:
+
+- `data/HYP_HR_SR_OB_DR/HYP_HR_SR_OB_DR.tif` — Natural Earth 1:10m raster **“Cross Blended Hypso with Relief, Water, Drains, and Ocean Bottom”** (`HYP_HR_SR_OB_DR`). Download the large GeoTIFF from Natural Earth and extract it into `data/HYP_HR_SR_OB_DR/`.
+- `data/great_basin/output_be.tif` — Great Basin regional DEM used for the Laphamia Great Basin panels. Generate this by clipping a DEM (e.g., NASADEM) to the Great Basin extent, or update the notebook `raster_path` to point to your local DEM.
 
 ## Usage
 
@@ -142,7 +142,7 @@ plot_geographical_heatmap_overlay(
 from rockdaisy.plotting import plot_3d_relief_with_species
 
 plot_3d_relief_with_species(
-    "data/great_basin/dem.tif",
+    "data/great_basin/output_be.tif",
     df,
     group_col="species",
     bbox=[-120, -110, 35, 42],
@@ -158,18 +158,11 @@ The primary analysis workflow lives in the Jupyter notebooks. To launch:
 uv run jupyter lab notebooks/
 ```
 
-| Notebook | Description |
-|----------|-------------|
-| `species_groupings_gbif.ipynb` | Main notebook — generates 20+ genus-level PDF maps from GBIF occurrence data |
-| `species_groupings.ipynb` | Earlier version using curated distribution spreadsheet |
-| `rock_daisy_eda.ipynb` | Data quality exploration: missing values, temporal patterns, field coverage |
-| `sky_island_eda.ipynb` | Analysis of sky island complex boundaries and species overlap |
-| `nomenclator.ipynb` | Interactive walkthrough of the `Nomenclator` class |
-| `gbif.ipynb` | GBIF backbone API query demo |
+The main notebook is `species_groupings_gbif.ipynb`, which generates 20+ genus-level PDF maps from GBIF occurrence data. It loads the nomenclator, reads GBIF occurrences, curates outliers, and produces scatter maps, heatmaps, and 3D relief plots for each genus.
 
 ### Generated Maps
 
-Running the species groupings notebooks produces PDF maps in `notebooks/img/`, organized by genus:
+Running the notebook produces PDF maps in `notebooks/img/`, organized by genus:
 
 - **Laphamia** — Arizona/New Mexico sky islands, Big Bend, Great Basin, Sonora/Sinaloa/Baja
 - **Perityle** — Baja/SW USA, mainland Mexico

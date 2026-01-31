@@ -6,7 +6,6 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-import rockdaisy
 from rockdaisy.nomenclator import Nomenclator
 
 def gbif_backbone_lookup(nomenclator, verbose=False):
@@ -38,7 +37,7 @@ def gbif_backbone_lookup(nomenclator, verbose=False):
 
 def main():
     # === Load Nomenclator ===
-    filepath = "../data/nomenclator.txt"
+    filepath = os.path.join(os.path.dirname(__file__), "..", "data", "nomenclator.txt")
     nomen = Nomenclator(filepath)
 
     # === Query GBIF ===
